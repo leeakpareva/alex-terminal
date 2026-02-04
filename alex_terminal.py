@@ -6,6 +6,7 @@ Main PyQt5 application for interacting with ALEX on the Pi.
 
 import sys
 import os
+import re
 import html
 import time
 from pathlib import Path
@@ -246,12 +247,13 @@ class AlexTerminal(QMainWindow):
 
     def _on_response(self, response):
         self._remove_thinking()
-        self._append_alex(response)
+        cleaned = self._clean_response(response)
+        self._append_alex(cleaned)
         self._set_input_enabled(True)
         self.input_field.setFocus()
 
-        if self.voice_on and response:
-            self._speak(response)
+        if self.voice_on and cleaned:
+            self._speak(cleaned)
 
     def _on_error(self, error):
         self._remove_thinking()
@@ -365,6 +367,54 @@ class AlexTerminal(QMainWindow):
         self._append_alex(f"[{title}] {body}")
         if self.voice_on:
             self._speak(body)
+
+    # --- Response cleanup ---
+
+    def _clean_response(self, text):
+        """Strip verbose tool narration, duplicate lines, and internal reasoning."""
+        if not text:
+            return text
+
+        lines = text.split("\n")
+        cleaned = []
+        seen = set()
+
+        # Patterns that indicate internal tool narration (not useful to the user)
+        narration_patterns = [
+            r"^I'll (use|try|install|send|attempt|run)\b",
+            r"^Let me (try|use|install|check|run)\b",
+            r"^I need to (install|use|try)\b",
+            r"^(Installing|Attempting|Trying|Running)\b.*\.\.\.",
+            r"^I('ll| will) (use|try) (a |the )?different approach",
+            r"^(Using|Switching to)\b.*\bapproach\b",
+        ]
+        narration_re = re.compile("|".join(narration_patterns), re.IGNORECASE)
+
+        for line in lines:
+            stripped = line.strip()
+
+            # Skip empty lines between removed narration
+            if not stripped:
+                # Keep one blank line max
+                if cleaned and cleaned[-1] == "":
+                    continue
+                cleaned.append("")
+                continue
+
+            # Skip duplicate lines
+            if stripped in seen:
+                continue
+
+            # Skip tool narration lines
+            if narration_re.match(stripped):
+                continue
+
+            seen.add(stripped)
+            cleaned.append(line)
+
+        # Strip leading/trailing blank lines
+        result = "\n".join(cleaned).strip()
+        return result if result else text
 
     # --- Chat display helpers ---
 
